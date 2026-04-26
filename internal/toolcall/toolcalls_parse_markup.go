@@ -10,8 +10,14 @@ import (
 var xmlAttrPattern = regexp.MustCompile(`(?is)\b([a-z0-9_:-]+)\s*=\s*("([^"]*)"|'([^']*)')`)
 var xmlToolCallsClosePattern = regexp.MustCompile(`(?is)</tool_calls>`)
 var xmlInvokeStartPattern = regexp.MustCompile(`(?is)<invoke\b[^>]*\bname\s*=\s*("([^"]*)"|'([^']*)')`)
+var xmlAgentSubagentCallPattern = regexp.MustCompile(`(?is)<tool_calls>\s*<tool_call>\s*<tool_call>\s*([^<]+?)\s*</tool_call>\s*(.*?)\s*</tool_call>\s*</tool_calls>`)
+var xmlAgentSubagentParamPattern = regexp.MustCompile(`(?is)<parameter\s+name="([^"]+)"\s*(?:type="[^"]*"\s*)?>\s*(.*?)\s*</parameter>`)
 
 func parseXMLToolCalls(text string) []ParsedToolCall {
+	if calls := parseAgentSubagentXMLCalls(text); len(calls) > 0 {
+		return calls
+	}
+
 	wrappers := findXMLElementBlocks(text, "tool_calls")
 	if len(wrappers) == 0 {
 		repaired := repairMissingXMLToolCallsOpeningWrapper(text)
@@ -31,6 +37,45 @@ func parseXMLToolCalls(text string) []ParsedToolCall {
 			}
 			out = append(out, call)
 		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func parseAgentSubagentXMLCalls(text string) []ParsedToolCall {
+	matches := xmlAgentSubagentCallPattern.FindAllStringSubmatch(text, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	out := make([]ParsedToolCall, 0, len(matches))
+	for _, m := range matches {
+		if len(m) < 3 {
+			continue
+		}
+		name := strings.TrimSpace(html.UnescapeString(m[1]))
+		if name == "" {
+			continue
+		}
+		input := map[string]any{}
+		paramsBody := strings.TrimSpace(m[2])
+		for _, pm := range xmlAgentSubagentParamPattern.FindAllStringSubmatch(paramsBody, -1) {
+			if len(pm) < 3 {
+				continue
+			}
+			k := strings.TrimSpace(pm[1])
+			v := extractRawTagValue(pm[2])
+			if k != "" {
+				parsed := parseStructuredToolCallInput(v)
+				if len(parsed) > 0 && !isOnlyRawValue(parsed, v) {
+					input[k] = parsed
+				} else {
+					input[k] = v
+				}
+			}
+		}
+		out = append(out, ParsedToolCall{Name: name, Input: input})
 	}
 	if len(out) == 0 {
 		return nil

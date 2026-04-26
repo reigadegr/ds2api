@@ -407,3 +407,75 @@ func TestParseToolCallsParsesAfterFourBacktickFence(t *testing.T) {
 		t.Fatalf("expected non-fenced tool call to be parsed, got %#v", res.Calls[0])
 	}
 }
+
+func TestParseToolCallsAgentSubagentXMLPattern(t *testing.T) {
+	text := `<tool_calls>
+    <tool_call>
+    <tool_call>agent</tool_call>
+    <parameter name="description" type="string">Explore project structure thoroughly</parameter>
+    <parameter name="prompt" type="string">这是提示词内容</parameter>
+    <parameter name="subagent_type" type="string">Explore</parameter>
+    </tool_call>
+</tool_calls>`
+	calls := ParseToolCalls(text, []string{"agent"})
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 agent subagent call, got %#v", calls)
+	}
+	if calls[0].Name != "agent" {
+		t.Fatalf("expected tool name agent, got %q", calls[0].Name)
+	}
+	if calls[0].Input["description"] != "Explore project structure thoroughly" {
+		t.Fatalf("expected description parameter, got %#v", calls[0].Input)
+	}
+	if calls[0].Input["prompt"] != "这是提示词内容" {
+		t.Fatalf("expected prompt parameter, got %#v", calls[0].Input)
+	}
+	if calls[0].Input["subagent_type"] != "Explore" {
+		t.Fatalf("expected subagent_type parameter, got %#v", calls[0].Input)
+	}
+}
+
+func TestParseToolCallsAgentSubagentXMLNoLeak(t *testing.T) {
+	text := `<tool_calls>
+    <tool_call>
+    <tool_call>agent</tool_call>
+    <parameter name="description" type="string">desc</parameter>
+    <parameter name="prompt" type="string">prompt</parameter>
+    </tool_call>
+</tool_calls>`
+	res := ParseToolCallsDetailed(text, []string{"agent"})
+	if len(res.Calls) != 1 {
+		t.Fatalf("expected exactly 1 call, got %#v", res.Calls)
+	}
+	if res.Calls[0].Name != "agent" {
+		t.Fatalf("expected tool name agent, got %q", res.Calls[0].Name)
+	}
+	if _, ok := res.Calls[0].Input["prompt"].(string); !ok {
+		t.Fatalf("expected prompt parameter, got %#v", res.Calls[0].Input)
+	}
+}
+
+func TestParseToolCallsAgentSubagentXMLWithCDATAParameter(t *testing.T) {
+	text := `<tool_calls>
+    <tool_call>
+    <tool_call>Write</tool_call>
+    <parameter name="content" type="string"><![CDATA[#!/bin/bash
+echo "hello world"]]></parameter>
+    <parameter name="file_path" type="string">script.sh</parameter>
+    </tool_call>
+</tool_calls>`
+	calls := ParseToolCalls(text, []string{"write"})
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %#v", calls)
+	}
+	if calls[0].Name != "Write" {
+		t.Fatalf("expected tool name Write, got %q", calls[0].Name)
+	}
+	content, _ := calls[0].Input["content"].(string)
+	if !strings.Contains(content, "#!/bin/bash") {
+		t.Fatalf("expected CDATA content preserved, got %q", content)
+	}
+	if calls[0].Input["file_path"] != "script.sh" {
+		t.Fatalf("expected file_path parameter, got %#v", calls[0].Input)
+	}
+}
